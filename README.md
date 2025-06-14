@@ -46,5 +46,5 @@ process_pixel_art(
     num_colors=num_colors,
     color_similarity_threshold=color_similarity_threshold
 )
-3. 手动修复边缘、抖色、抗锯齿、索引颜色等技术细节。
 ```
+3. 手动修复边缘、抖色、抗锯齿、索引颜色等技术细节。
