@@ -3,7 +3,7 @@
 <p align="center">
   <strong>Transform AI-generated "pseudo-pixel art" into authentic pixel art.</strong>
   <br>
-  <em>将AI生成的“伪像素图”转换为纯正的像素艺术。</em>
+  <em>将AI生成的“伪像素图”转换为真正的像素图。</em>
 </p>
 
 ![Showcase](https://github.com/DDDeeeee/Pixel-Fixer/blob/main/comparative_example.png)
@@ -26,11 +26,11 @@ AI生成的“伪像素图”存在以下问题：
 - **支持动图 (GIF)**: 逐帧处理GIF动图，并保证整个动画使用统一的网格尺寸和调色板。
 
 ## 🚀 Usage
-
+1. 配置环境
 ```bash
 pip install Pillow numpy scipy
 ```
-
+2. 执行代码
 ```python
 from pixel_fixer.process_pixel_art import *
 
@@ -46,4 +46,5 @@ process_pixel_art(
     num_colors=num_colors,
     color_similarity_threshold=color_similarity_threshold
 )
+3. 手动修复边缘、抖色、抗锯齿、索引颜色等技术细节。
 ```
