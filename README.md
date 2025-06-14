@@ -6,7 +6,7 @@
   <em>将AI生成的“伪像素图”转换为纯正的像素艺术。</em>
 </p>
 
-![Showcase](https://github.com/DDDeeeee/Pixel-Fixer/comparative_example.png)
+![Showcase](https://github.com/DDDeeeee/Pixel-Fixer/blob/main/comparative_example.png)
 *<p align="center">处理前后对比</p>*
 
 ## 😫 The Problem
