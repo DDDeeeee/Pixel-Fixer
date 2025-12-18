@@ -6,18 +6,15 @@
   <em>将AI生成的“伪像素图”转换为真正的像素图。</em>
 </p>
 
-![Showcase](https://github.com/DDDeeeee/Pixel-Fixer/blob/main/img_input/img1.jpeg)
-*<p align="center">原始图像>yp>*
-![Showcase](https://github.com/DDDeeeee/Pixel-Fixer/blob/main/img_output/img1_upscaled.png)
-*<p align="center">处理后图像</p>*
-![Showcase](https://github.com/DDDeeeee/Pixel-Fixer/blob/main/img_output/img1_stylized_upscaled.png)
-*<p align="center">风格化图像</p>*
+| 原始图像 | 处理后图像 | 风格化图像 |
+| :---: | :---: | :---: |
+| <img src="https://github.com/DDDeeeee/Pixel-Fixer/blob/main/img_input/img1.jpeg" width="300"> | <img src="https://github.com/DDDeeeee/Pixel-Fixer/blob/main/img_output/img1_upscaled.png" width="300"> | <img src="https://github.com/DDDeeeee/Pixel-Fixer/blob/main/img_output/img1_stylized_upscaled.png" width="300"> |
 
 ## Updata
 
-2. Dec 12, 2025
+###### Dec 12, 2025  
 Referencing the following project, the relevant code has been upgraded: [pixel-snapper](https://github.com/Hugo-Dz/spritefusion-pixel-snapper), [pixelit](https://github.com/giventofly/pixelit).
-1. Jun 14, 2025  
+###### Jun 14, 2025  
 Upload project.
 
 ## 😫 The Problem
