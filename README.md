@@ -9,6 +9,13 @@
 ![Showcase](https://github.com/DDDeeeee/Pixel-Fixer/blob/main/comparative_example.png)
 *<p align="center">处理前后对比</p>*
 
+## Updata
+
+2. Dec 12, 2025
+Referencing the following project, the relevant code has been upgraded: [pixel-snapper][https://github.com/Hugo-Dz/spritefusion-pixel-snapper], [pixelit][https://github.com/giventofly/pixelit].
+1. Jun 14, 2025  
+Upload project.
+
 ## 😫 The Problem
 
 AI生成的“伪像素图”存在以下问题：
@@ -23,7 +30,7 @@ AI生成的“伪像素图”存在以下问题：
 - **色彩聚类**: 使用聚类来合并噪点并创建平滑、自然的颜色过渡；
 - **色彩量化**: 可将最终的调色板精简到指定数量；
 - **双格式输出**: 生成全尺寸图和“点对点”缩放图；
-- **支持动图 (GIF)**: 逐帧处理GIF动图，并保证整个动画使用统一的网格尺寸和调色板。
+- **风格化滤镜**: 根据调色板进行风格化映射。
 
 ## 🚀 Usage
 1. 配置环境
