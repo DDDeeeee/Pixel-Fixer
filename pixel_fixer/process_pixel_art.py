@@ -1,235 +1,185 @@
-import os
 import numpy as np
-import scipy.signal
-import scipy.ndimage
-from collections import Counter
-from PIL import Image, ImageSequence
+from PIL import Image
+import random
+import math
+from scipy.cluster.vq import kmeans2, vq
 
+class Config:
+    def __init__(self, k_colors=None, k_seed=42):
+        self.k_colors = k_colors
+        self.k_seed = k_seed
+        self.max_kmeans_iterations = 15
+        self.peak_threshold_multiplier = 0.2
+        self.peak_distance_filter = 4
+        self.walker_search_window_ratio = 0.35
+        self.walker_min_search_window = 2.0
+        self.walker_strength_threshold = 0.5
+        self.min_cuts_per_axis = 4
+        self.fallback_target_segments = 64
+        self.max_step_ratio = 3.0
 
-def auto_detect_block_size(frames, min_size=2, max_size=50):
-    """ 通过分析图像梯度和形态学处理，自动检测块大小。 """
+def auto_detect_k(opaque_pixels, max_k=64):
+    """自适应识别颜色数量：识别视觉主色并过滤杂色。不是很准"""
+    if len(opaque_pixels) == 0:
+        return 2
     
-    all_distances = []
-    for i, frame in enumerate(frames):
-        # --- 预处理和梯度计算 ---
-        gray_img = frame.convert('L')
-        data = np.array(gray_img, dtype=np.float32)
-        data = scipy.ndimage.gaussian_filter(data, sigma=1.2)
-
-        sobel_x = scipy.ndimage.sobel(data, axis=0)
-        sobel_y = scipy.ndimage.sobel(data, axis=1)
-        gradient = np.hypot(sobel_x, sobel_y)
-
-        # --- 创建清晰的二值化边缘图 ---
-        # 自适应阈值化：使用百分位数来确定强边缘
-        if gradient.max() == 0: continue # 跳过纯色帧
-        threshold = np.percentile(gradient, 85) # 85th percentile
-        
-        # 创建二值化边缘图
-        edge_map = gradient > threshold
-        
-        # 形态学开运算：移除噪声
-        structure = np.ones((2, 2))
-        cleaned_edge_map = scipy.ndimage.binary_opening(edge_map, structure=structure, iterations=1)
-
-        # --- 在净化后的边缘图上进行分析 ---
-        height, width = cleaned_edge_map.shape
-        
-        # 水平分析
-        h_projection = np.sum(cleaned_edge_map, axis=1)
-        h_peaks, _ = scipy.signal.find_peaks(h_projection, height=1, distance=min_size - 1)
-        if len(h_peaks) > 1: all_distances.extend(np.diff(h_peaks))
-
-        # 垂直分析
-        v_projection = np.sum(cleaned_edge_map, axis=0)
-        v_peaks, _ = scipy.signal.find_peaks(v_projection, height=1, distance=min_size - 1)
-        if len(v_peaks) > 1: all_distances.extend(np.diff(v_peaks))
-
-    if not all_distances:
-        print("警告：未能检测到足够的边缘来估算块大小。")
-        return None
-
-    filtered_distances = [d for d in all_distances if min_size <= d <= max_size]
+    sample = opaque_pixels[np.random.choice(len(opaque_pixels), min(len(opaque_pixels), 50000), replace=False)]
     
-    if not filtered_distances:
-        print(f"警告：所有检测到的距离都在过滤范围之外 ({min_size}-{max_size})。")
-        return None
-
-    # 聚类中心
-    rounded_distances = np.round(filtered_distances).astype(int)
-    count = Counter(rounded_distances)
-    if not count:
-        return None
-
-    estimated_size = count.most_common(1)[0][0]
-    return int(estimated_size)
-
-
-def color_distance_sq(c1, c2):
-    """ 计算两个RGB颜色之间欧氏距离的平方。 """
-    r1, g1, b1 = map(float, c1)
-    r2, g2, b2 = map(float, c2)
+    # 统计频率
+    packed = sample[:, 0].astype(np.int32) << 16 | sample[:, 1].astype(np.int32) << 8 | sample[:, 2].astype(np.int32)
+    unique_vals, counts = np.unique(packed, return_counts=True)
     
-    return (r1 - r2)**2 + (g1 - g2)**2 + (b1 - b2)**2
+    # 频率排序
+    sort_idx = np.argsort(-counts)
+    unique_rgbs = np.zeros((len(unique_vals), 3))
+    unique_rgbs[:, 0], unique_rgbs[:, 1], unique_rgbs[:, 2] = (unique_vals >> 16) & 0xFF, (unique_vals >> 8) & 0xFF, unique_vals & 0xFF
+    unique_rgbs = unique_rgbs[sort_idx]
+    counts = counts[sort_idx]
 
+    # 合并视觉相近的颜色，35-50范围调节
+    dist_threshold_sq = 35 ** 2
+    principal_colors = []
+    coverage = 0
+    target_coverage = len(sample) * 0.98 # 大部分颜色
 
-def find_clustered_color(block, similarity_threshold=60):
-    """
-    通过色彩聚类找到块的代表色，能有效合并杂色并平滑过渡。
-
-    参数:
-    - block (np.ndarray): 输入的像素块。
-    - similarity_threshold (int): 颜色相似度阈值。距离小于此值的颜色会被聚类。
-
-    返回:
-    - tuple: (R, G, B) 格式的最终颜色。
-    """
-    if block.size == 0: return (0, 0, 0)
-
-    pixels = block.reshape(-1, block.shape[-1])
-    counts = Counter(map(tuple, pixels))
-    if len(counts) == 1:
-        return list(counts.keys())[0][:3]
-    
-    sorted_colors = sorted(counts.items(), key=lambda item: item[1], reverse=True)
-    
-    clusters = []
-    threshold_sq = similarity_threshold**2
-
-    for color, count in sorted_colors:
-        color_rgb = color[:3]
-        merged = False
-        for cluster in clusters:
-            # 检查是否可以合并到现有簇
-            if color_distance_sq(color_rgb, cluster['mean_color']) < threshold_sq:
-                # 更新簇的加权平均色和总数
-                total_count = cluster['count'] + count
-                cluster['mean_color'] = tuple(
-                    int((cluster['mean_color'][i] * cluster['count'] + color_rgb[i] * count) / total_count)
-                    for i in range(3)
-                )
-                cluster['count'] = total_count
-                merged = True
-                break
-        
-        if not merged:
-            clusters.append({'mean_color': color_rgb, 'count': count})
+    for i in range(len(unique_rgbs)):
+        curr = unique_rgbs[i]
+        if not principal_colors or np.min(np.sum((np.array(principal_colors) - curr)**2, axis=1)) > dist_threshold_sq:
+            principal_colors.append(curr)
+            coverage += counts[i]
+        if len(principal_colors) >= max_k or coverage >= target_coverage:
+            break
             
-    if not clusters: return (0, 0, 0) # 极端情况
-    dominant_cluster = max(clusters, key=lambda c: c['count'])
+    return max(2, len(principal_colors))
+
+def quantize_image_optimized(img_np, config):
+    h, w = img_np.shape[:2]
+    alpha = img_np[:, :, 3]
+    opaque_mask = alpha > 0
+    opaque_pixels = img_np[opaque_mask][:, :3].astype(np.float32)
+
+    if len(opaque_pixels) == 0:
+        return img_np, np.zeros((h, w), dtype=np.int32), np.zeros((1, 4))
+
+    final_k = config.k_colors or auto_detect_k(opaque_pixels)
     
-    # 返回最大簇的代表色
-    return dominant_cluster['mean_color']
-
-def process_single_frame_cluster(frame_data, block_size, similarity_threshold):
-    """ 单帧处理函数，使用色彩聚类。 """
-    height, width, _ = frame_data.shape
-    output_full = np.zeros_like(frame_data)
-
-    for y in range(0, height, block_size):
-        for x in range(0, width, block_size):
-            y_end = min(y + block_size, height)
-            x_end = min(x + block_size, width)
-            block = frame_data[y:y_end, x:x_end]
-            
-            final_color = find_clustered_color(block, similarity_threshold)
-            
-            output_full[y:y_end, x:x_end] = final_color
+    k = min(final_k, len(opaque_pixels))
+    print(f"k_colors is set to {k}({final_k})")
+    centroids, _ = kmeans2(opaque_pixels, k, iter=config.max_kmeans_iterations, minit='points', seed=config.k_seed)
     
-    # 生成缩放图
-    scaled_height = (height + block_size - 1) // block_size
-    scaled_width = (width + block_size - 1) // block_size
-    scaled_img = Image.fromarray(output_full).resize((scaled_width, scaled_height), Image.Resampling.NEAREST)
-    output_scaled = np.array(scaled_img)
+    all_rgb = img_np[:, :, :3].reshape(-1, 3).astype(np.float32)
+    label_indices, _ = vq(all_rgb, centroids)
+    index_map = label_indices.reshape(h, w).astype(np.int32)
 
-    return output_full, output_scaled
+    palette = np.column_stack((centroids, np.full(len(centroids), 255))).astype(np.uint8)
+    quantized_rgb = np.dstack((palette[index_map][:,:,:3], alpha))
+    return quantized_rgb, index_map, palette
 
-def process_pixel_art(
-    image_path: str, 
-    block_size: int = None, 
-    output_path: str = 'result.png',
-    num_colors: int = None,
-    color_similarity_threshold: int = 60
-):
+def compute_profiles_vectorized(img_np):
+    gray = 0.299 * img_np[:,:,0] + 0.587 * img_np[:,:,1] + 0.114 * img_np[:,:,2]
+    gray[img_np[:,:,3] == 0] = 0.0
+    col_proj = np.pad(np.sum(np.abs(gray[:, 2:] - gray[:, :-2]), axis=0), 1, mode='edge')
+    row_proj = np.pad(np.sum(np.abs(gray[2:, :] - gray[:-2, :]), axis=1), 1, mode='edge')
+    return col_proj.tolist(), row_proj.tolist()
 
-    try:
-        img = Image.open(image_path)
-    except FileNotFoundError:
-        print(f"错误：找不到文件 '{image_path}'")
-        return
-        
-    is_animated = hasattr(img, 'is_animated') and img.is_animated
-    original_frames_pil = [frame.copy().convert('RGB') for frame in ImageSequence.Iterator(img)]
+def estimate_step_size(profile, config):
+    p = np.array(profile)
+    if np.max(p) == 0: return None
+    peaks = np.where((p[1:-1] > np.max(p)*config.peak_threshold_multiplier) & (p[1:-1] >= p[:-2]) & (p[1:-1] >= p[2:]))[0] + 1
+    if len(peaks) < 2: return None
+    clean_peaks = [peaks[0]]
+    for pk in peaks[1:]:
+        if pk - clean_peaks[-1] >= config.peak_distance_filter: clean_peaks.append(pk)
+    if len(clean_peaks) < 2: return None
+    return float(np.median(np.diff(clean_peaks)))
 
-    if block_size is None or block_size <= 0:
-        block_size = auto_detect_block_size(original_frames_pil)
-        if block_size is None: 
-            print("自动检测失败，程序终止。请手动指定 `block_size`。")
-            return
-            
-    print(f"图像尺寸: {img.width}×{img.height}, 帧数: {len(original_frames_pil)}")
-    print(f"使用的像素块大小: {block_size}x{block_size}")
+def walk(profile, step_size, limit, config):
+    cuts, curr = [0], 0.0
+    win = max(step_size * config.walker_search_window_ratio, config.walker_min_search_window)
+    mean_v = np.mean(profile)
+    while curr < limit:
+        target = curr + step_size
+        if target >= limit:
+            cuts.append(limit); break
+        start, end = max(int(target - win), int(curr + 1)), min(int(target + win), limit)
+        if end <= start:
+            curr = target; cuts.append(int(target)); continue
+        window = profile[start:end]
+        max_idx = np.argmax(window)
+        if window[max_idx] > mean_v * config.walker_strength_threshold:
+            curr = float(start + max_idx); cuts.append(int(curr))
+        else:
+            curr = target; cuts.append(int(target))
+    return sorted(list(set(cuts)))
 
-    base, ext = os.path.splitext(output_path)
-    output_path_full = f"{base}_{block_size}_full{ext}"
-    output_path_scaled = f"{base}_{block_size}_scaled{ext}"
+def snap_uniform_cuts(profile, limit, target_step, config, min_req):
+    cells = min(max(int(round(limit / target_step)), min_req - 1), limit)
+    cell_w = limit / cells
+    win = max(cell_w * config.walker_search_window_ratio, config.walker_min_search_window)
+    mean_v = np.mean(profile) if profile else 0
+    cuts = [0]
+    for i in range(1, cells):
+        target = cell_w * i
+        prev = cuts[-1]
+        start, end = max(prev + 1, int(target - win)), min(limit - 1, int(target + win))
+        if end < start:
+            cuts.append(min(prev + 1, limit - 1))
+        else:
+            window = profile[start:end+1]
+            if np.max(window) > mean_v * config.walker_strength_threshold:
+                cuts.append(start + np.argmax(window))
+            else:
+                cuts.append(min(max(int(round(target)), prev + 1), limit - 1))
+    cuts.append(limit)
+    return sorted(list(set(cuts)))
+
+def stabilize_both_axes(px, py, raw_cx, raw_ry, w, h, config):
+    # 移除强制 step_x == step_y
+    def get_stab(prof, cuts, lim):
+        c = sorted(list(set([0, lim] + [int(x) for x in cuts])))
+        min_r = min(max(config.min_cuts_per_axis, 2), lim + 1)
+        if len(c) >= min_r: return c
+        t_step = lim / config.fallback_target_segments if config.fallback_target_segments > 1 else 10.0
+        return snap_uniform_cuts(prof, lim, t_step, config, min_r)
     
-    # --- 处理帧 ---
-    final_frames_full = []
-    for i, frame_pil in enumerate(original_frames_pil):
-        frame_data = np.array(frame_pil)
-        
-        processed_full_data, _ = process_single_frame_cluster(
-            frame_data, 
-            block_size, 
-            color_similarity_threshold
-        )
-        final_frames_full.append(Image.fromarray(processed_full_data))
+    return get_stab(px, raw_cx, w), get_stab(py, raw_ry, h)
 
-    if num_colors:
-        quantized_full = []
-        for frame in final_frames_full:
-            quantized_frame = frame.quantize(colors=num_colors, method=Image.Quantize.MEDIANCUT).convert('RGB')
-            quantized_full.append(quantized_frame)
-        final_frames_full = quantized_full
+def resample_optimized(index_map, palette, alpha_map, cols, rows):
+    out_w, out_h = len(cols) - 1, len(rows) - 1
+    output_data = np.zeros((out_h, out_w, 4), dtype=np.uint8)
+    for y in range(out_h):
+        ys, ye = rows[y], rows[y+1]
+        for x in range(out_w):
+            xs, xe = cols[x], cols[x+1] 
+            idx_block, alpha_block = index_map[ys:ye, xs:xe], alpha_map[ys:ye, xs:xe]
+            if idx_block.size == 0: continue
+            if np.mean(alpha_block < 128) > 0.5:
+                output_data[y, x] = [0, 0, 0, 0]
+            else:
+                opaque_indices = idx_block[alpha_block > 128]
+                target = opaque_indices if opaque_indices.size > 0 else idx_block
+                output_data[y, x] = palette[np.argmax(np.bincount(target.ravel()))]
+    return Image.fromarray(output_data, "RGBA")
 
-    # --- 从处理完的全尺寸图中生成缩放图 ---
-    final_frames_scaled = []
-    scaled_height = (img.height + block_size - 1) // block_size
-    scaled_width = (img.width + block_size - 1) // block_size
-    for frame in final_frames_full:
-        # 使用NEAREST采样
-        scaled_img = frame.resize((scaled_width, scaled_height), Image.Resampling.NEAREST)
-        final_frames_scaled.append(scaled_img)
+def process_image(input_bytes, k_colors=None):
+    from io import BytesIO
+    config = Config(k_colors=k_colors)
+    img = Image.open(BytesIO(input_bytes)).convert("RGBA")
+    img_np = np.array(img)
+    w, h = img.size
+    
+    quantized_np, index_map, palette = quantize_image_optimized(img_np, config)
+    px, py = compute_profiles_vectorized(quantized_np)
+    
+    sx = estimate_step_size(px, config) or (w / config.fallback_target_segments)
+    sy = estimate_step_size(py, config) or (h / config.fallback_target_segments)
 
-
-    # --- 保存 ---
-    if is_animated:
-        durations = [frame.info.get('duration', 100) for frame in ImageSequence.Iterator(img)]
-        loop = img.info.get('loop', 0)
-        final_frames_full[0].save(
-            output_path_full, save_all=True, append_images=final_frames_full[1:],
-            duration=durations, loop=loop, optimize=False
-        )
-        final_frames_scaled[0].save(
-            output_path_scaled, save_all=True, append_images=final_frames_scaled[1:],
-            duration=durations, loop=loop, optimize=False
-        )
-    else:
-        final_frames_full[0].save(output_path_full)
-        final_frames_scaled[0].save(output_path_scaled)
-    print(f"结果已保存至: '{output_path_full}'")
-
-if __name__ == '__main__':
-    num_colors = None
-    color_similarity_threshold=60
-    input_file = 'example.jpeg'
-    output_file = input_file.split('.')[0] + f'_{num_colors}.' + ('png' if input_file.split('.')[1] != 'gif' else 'gif')
-
-    process_pixel_art(
-        image_path=input_file,
-        block_size=None, # None: 自动检测
-        output_path=output_file,
-        num_colors=num_colors,
-        color_similarity_threshold=color_similarity_threshold
-    )
+    raw_cx = walk(px, sx, w, config)
+    raw_ry = walk(py, sy, h, config)
+    
+    cols, rows = stabilize_both_axes(px, py, raw_cx, raw_ry, w, h, config)
+    result_img = resample_optimized(index_map, palette, img_np[:,:,3], cols, rows)
+    
+    out_io = BytesIO()
+    result_img.save(out_io, format="PNG")
+    return out_io.getvalue()
