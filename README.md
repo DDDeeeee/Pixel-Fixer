@@ -6,13 +6,17 @@
   <em>将AI生成的“伪像素图”转换为真正的像素图。</em>
 </p>
 
-![Showcase](https://github.com/DDDeeeee/Pixel-Fixer/blob/main/comparative_example.png)
-*<p align="center">处理前后对比</p>*
+![Showcase](https://github.com/DDDeeeee/Pixel-Fixer/blob/main/img_input/img1.jpeg)
+*<p align="center">原始图像>yp>*
+![Showcase](https://github.com/DDDeeeee/Pixel-Fixer/blob/main/img_output/img1_upscaled.png)
+*<p align="center">处理后图像</p>*
+![Showcase](https://github.com/DDDeeeee/Pixel-Fixer/blob/main/img_output/img1_stylized_upscaled.png)
+*<p align="center">风格化图像</p>*
 
 ## Updata
 
 2. Dec 12, 2025
-Referencing the following project, the relevant code has been upgraded: [pixel-snapper][https://github.com/Hugo-Dz/spritefusion-pixel-snapper], [pixelit][https://github.com/giventofly/pixelit].
+Referencing the following project, the relevant code has been upgraded: [pixel-snapper](https://github.com/Hugo-Dz/spritefusion-pixel-snapper), [pixelit](https://github.com/giventofly/pixelit).
 1. Jun 14, 2025  
 Upload project.
 
@@ -39,19 +43,34 @@ pip install Pillow numpy scipy
 ```
 2. 执行代码
 ```python
-from pixel_fixer.process_pixel_art import *
+from pathlib import Path
+from tool import open_image, save_image, save_pil_image
+from pixel_stylist import apply_style
+from process_pixel_art import process_image
+from pixel_upscaler import PixelUpscaler
 
-num_colors = None
-color_similarity_threshold=20
-input_file = 'xxx.png'
-output_file = input_file.split('.')[0] + f'_{num_colors}.' + ('png' if input_file.split('.')[1] != 'gif' else 'gif')
+upscaler = PixelUpscaler()
 
-process_pixel_art(
-    image_path='img_input/' + input_file,
-    block_size=None, # None: 自动检测
-    output_path='img_output/' + output_file,
-    num_colors=num_colors,
-    color_similarity_threshold=color_similarity_threshold
-)
+org_img_path = "img_input/img1.jpeg"
+output_img_path = Path("img_output/img1.jpeg")
+
+# 像素化
+data = open_image(org_img_path)
+result = process_image(data)
+save_image(result, output_img_path.with_stem(output_img_path.stem + "_pix"))
+
+# 高清化
+hd_img = upscaler.upscale_with_grid(result, scale_factor=10, grid_opacity=0)
+save_pil_image(hd_img, output_img_path.with_stem(output_img_path.stem + "_upscaled").with_suffix(".png"))
+
+# 风格化
+final_art = apply_style(result, style_name='pico8', use_dither=True, use_scanlines=True)
+stylized_output_img_path = output_img_path.with_stem(output_img_path.stem + "_stylized")
+save_image(final_art, stylized_output_img_path)
+
+# 高清化
+hd_stylized_img = upscaler.upscale_with_grid(final_art, scale_factor=10, grid_opacity=0)
+upscaled_stylized_output_img_path = stylized_output_img_path.with_stem(stylized_output_img_path.stem + "_upscaled").with_suffix(".png")
+save_pil_image(hd_stylized_img, upscaled_stylized_output_img_path)
 ```
-3. 手动修复边缘、抖色、抗锯齿、索引颜色等技术细节。
+3. 手动修复边缘、抖色、抗锯齿、错误色点等细节。
